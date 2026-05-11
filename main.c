@@ -6,8 +6,11 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <sys/types.h>
+#include <sys/wait.h>
 #include <time.h>
 #include <unistd.h>
+#include <signal.h>
 
 #ifndef PATH_MAX
 #define PATH_MAX 4096
@@ -18,6 +21,7 @@
 #define LOG_FILE "logged_district"
 #define LATEST_LINK "latest_report"
 #define ACTIVE_PREFIX "active_reports-"
+#define MONITOR_PID_FILE ".monitor_pid"
 
 #define DIR_MODE 0750
 #define REPORT_MODE 0664
@@ -30,9 +34,10 @@
 #define DESC_LEN 320
 
 typedef enum { ROLE_BAD, ROLE_INSPECTOR, ROLE_MANAGER } Role;
-typedef enum { CMD_NONE, CMD_ADD, CMD_REMOVE, CMD_LIST, CMD_SHOW, CMD_THRESHOLD, CMD_FILTER, CMD_METADATA } Cmd;
+typedef enum { CMD_NONE, CMD_ADD, CMD_REMOVE, CMD_LIST, CMD_SHOW, CMD_THRESHOLD, CMD_FILTER, CMD_METADATA, CMD_REMOVE_DISTRICT } Cmd;
 
-typedef struct Report {
+typedef struct Report 
+{
     uint32_t id;
     char inspector[USER_LEN];
     double latitude;
@@ -45,7 +50,8 @@ typedef struct Report {
     uint8_t reserved[7];
 } Report;
 
-typedef struct AddData {
+typedef struct AddData 
+{
     char inspector[USER_LEN];
     double lat;
     double lon;
@@ -54,7 +60,8 @@ typedef struct AddData {
     char desc[DESC_LEN];
 } AddData;
 
-typedef struct Query {
+typedef struct Query 
+{
     int active;
     int min_sev;
     int max_sev;
@@ -90,7 +97,8 @@ Role parse_role(const char *s)
 
 int copy_text(char *dst, size_t size, const char *src, const char *name)
 {
-    if (snprintf(dst, size, "%s", src) >= (int)size) {
+    if (snprintf(dst, size, "%s", src) >= (int)size) 
+    {
         fprintf(stderr, "%s is too long\n", name);
         return -1;
     }
@@ -101,12 +109,15 @@ int good_name(const char *s, const char *what)
 {
     int i;
 
-    if (!s || !s[0]) {
+    if (!s || !s[0]) 
+    {
         fprintf(stderr, "%s must not be empty\n", what);
         return 0;
     }
-    for (i = 0; s[i]; i++) {
-        if (!isalnum((unsigned char)s[i]) && s[i] != '_' && s[i] != '-') {
+    for (i = 0; s[i]; i++) 
+    {
+        if (!isalnum((unsigned char)s[i]) && s[i] != '_' && s[i] != '-') 
+        {
             fprintf(stderr, "%s may contain only letters, digits, '_' and '-': %s\n", what, s);
             return 0;
         }
@@ -137,7 +148,8 @@ int parse_severity(const char *s, int *out)
 
 int need_arg(int argc, char **argv, int i, const char *opt)
 {
-    if (i + 1 >= argc || strncmp(argv[i + 1], "--", 2) == 0) {
+    if (i + 1 >= argc || strncmp(argv[i + 1], "--", 2) == 0) 
+    {
         fprintf(stderr, "%s requires an argument\n", opt);
         return 0;
     }
@@ -163,7 +175,8 @@ void time_string(time_t t, char *out, size_t size)
 {
     struct tm tm;
 
-    if (!localtime_r(&t, &tm)) {
+    if (!localtime_r(&t, &tm)) 
+    {
         snprintf(out, size, "unknown");
         return;
     }
@@ -177,7 +190,8 @@ int check_access(const char *path, Role role, int r, int w, int x)
     int bits;
     char mode[11];
 
-    if (stat(path, &st) == -1) {
+    if (stat(path, &st) == -1) 
+    {
         perror(path);
         return -1;
     }
@@ -187,9 +201,7 @@ int check_access(const char *path, Role role, int r, int w, int x)
     if ((!r || (bits & 4)) && (!w || (bits & 2)) && (!x || (bits & 1))) return 0;
 
     mode_string(st.st_mode, mode);
-    fprintf(stderr,
-            "permission denied for role=%s on %s: current mode %s (%03o)\n",
-            role_name(role), path, mode, st.st_mode & 0777);
+    fprintf(stderr, "permission denied for role=%s on %s: current mode %s (%03o)\n", role_name(role), path, mode, st.st_mode & 0777);
     return -1;
 }
 
@@ -200,24 +212,29 @@ int ensure_layout(const char *district)
     int fd, made, log_existed = 0;
 
     made = mkdir(district, DIR_MODE);
-    if (made == -1 && errno != EEXIST) {
+    if (made == -1 && errno != EEXIST) 
+    {
         perror(district);
         return -1;
     }
-    if (stat(district, &st) == -1 || !S_ISDIR(st.st_mode)) {
+    if (stat(district, &st) == -1 || !S_ISDIR(st.st_mode)) 
+    {
         fprintf(stderr, "%s exists but is not a directory\n", district);
         return -1;
     }
     if (made == 0) chmod(district, DIR_MODE);
 
     path_join(cfg, sizeof(cfg), district, CONFIG_FILE);
-    if (stat(cfg, &st) == -1) {
-        if (errno != ENOENT) {
+    if (stat(cfg, &st) == -1) 
+    {
+        if (errno != ENOENT) 
+        {
             perror(cfg);
             return -1;
         }
         fd = open(cfg, O_WRONLY | O_CREAT | O_TRUNC, CONFIG_MODE);
-        if (fd == -1) {
+        if (fd == -1) 
+        {
             perror(cfg);
             return -1;
         }
@@ -232,7 +249,8 @@ int ensure_layout(const char *district)
     path_join(logp, sizeof(logp), district, LOG_FILE);
     if (stat(logp, &st) == 0) log_existed = 1;
     fd = open(logp, O_WRONLY | O_CREAT | O_APPEND, LOG_MODE);
-    if (fd == -1) {
+    if (fd == -1) 
+    {
         perror(logp);
         return -1;
     }
@@ -249,22 +267,26 @@ int refresh_links(const char *district)
 
     path_join(latest, sizeof(latest), district, LATEST_LINK);
     unlink(latest);
-    if (symlink(REPORT_FILE, latest) == -1) {
+    if (symlink(REPORT_FILE, latest) == -1) 
+    {
         perror(latest);
         return -1;
     }
 
     path_active(active, sizeof(active), district);
     snprintf(target, sizeof(target), "%s/%s", district, REPORT_FILE);
-    if (lstat(active, &st) == 0) {
-        if (!S_ISLNK(st.st_mode)) {
+    if (lstat(active, &st) == 0) 
+    {
+        if (!S_ISLNK(st.st_mode)) 
+        {
             fprintf(stderr, "%s exists but is not a symbolic link\n", active);
             return -1;
         }
         if (stat(active, &st) == -1) fprintf(stderr, "warning: dangling symlink detected and replaced: %s\n", active);
         unlink(active);
     }
-    if (symlink(target, active) == -1) {
+    if (symlink(target, active) == -1) 
+    {
         perror(active);
         return -1;
     }
@@ -284,12 +306,14 @@ int read_threshold(const char *district, Role role, int *threshold)
     if (check_access(cfg, role, 1, 0, 0) == -1) return -1;
 
     fd = open(cfg, O_RDONLY);
-    if (fd == -1) {
+    if (fd == -1) 
+    {
         perror(cfg);
         return -1;
     }
     n = read(fd, buf, sizeof(buf) - 1);
-    if (n == -1) {
+    if (n == -1) 
+    {
         perror(cfg);
         close(fd);
         return -1;
@@ -298,9 +322,8 @@ int read_threshold(const char *district, Role role, int *threshold)
     buf[n] = 0;
 
     p = strstr(buf, "severity_threshold=");
-    if (p &&
-        (sscanf(p + strlen("severity_threshold="), "%d", threshold) != 1 ||
-         *threshold < 1 || *threshold > 3)) {
+    if (p && (sscanf(p + strlen("severity_threshold="), "%d", threshold) != 1 || *threshold < 1 || *threshold > 3)) 
+    {
         fprintf(stderr, "%s has invalid severity_threshold; expected 1, 2, or 3\n", cfg);
         return -1;
     }
@@ -316,20 +339,22 @@ int write_threshold(const char *district, Role role, int threshold)
     if (ensure_layout(district) == -1) return -1;
     path_join(cfg, sizeof(cfg), district, CONFIG_FILE);
 
-    if (stat(cfg, &st) == -1) {
+    if (stat(cfg, &st) == -1) 
+    {
         perror(cfg);
         return -1;
     }
-    if ((st.st_mode & 0777) != CONFIG_MODE) {
+    if ((st.st_mode & 0777) != CONFIG_MODE) 
+    {
         mode_string(st.st_mode, mode);
-        fprintf(stderr, "district.cfg permission mismatch on %s: expected rw-r----- (640), found %s (%03o)\n",
-                cfg, mode, st.st_mode & 0777);
+        fprintf(stderr, "district.cfg permission mismatch on %s: expected rw-r----- (640), found %s (%03o)\n", cfg, mode, st.st_mode & 0777);
         return -1;
     }
     if (check_access(cfg, role, 1, 1, 0) == -1) return -1;
 
     fd = open(cfg, O_WRONLY | O_TRUNC, CONFIG_MODE);
-    if (fd == -1) {
+    if (fd == -1) 
+    {
         perror(cfg);
         return -1;
     }
@@ -348,17 +373,18 @@ int add_log(const char *district, Role role, const char *user, const char *actio
 
     if (ensure_layout(district) == -1) return -1;
     path_join(logp, sizeof(logp), district, LOG_FILE);
-    if (check_access(logp, role, 0, 1, 0) == -1) {
+    if (check_access(logp, role, 0, 1, 0) == -1) 
+    {
         fprintf(stderr, "operation log write refused for role=%s\n", role_name(role));
         return -1;
     }
     fd = open(logp, O_WRONLY | O_CREAT | O_APPEND, LOG_MODE);
-    if (fd == -1) {
+    if (fd == -1) 
+    {
         perror(logp);
         return -1;
     }
-    snprintf(line, sizeof(line), "%lld %s %s %s\n",
-             (long long)time(NULL), user, role_name(role), action);
+    snprintf(line, sizeof(line), "%lld %s %s %s\n",(long long)time(NULL), user, role_name(role), action);
     write(fd, line, strlen(line));
     fsync(fd);
     close(fd);
@@ -374,12 +400,14 @@ int report_fd(const char *district, int create, Role role, int want_write)
 
     path_join(path, sizeof(path), district, REPORT_FILE);
     if (stat(path, &st) == 0) existed = 1;
-    else if (errno != ENOENT) {
+    else if (errno != ENOENT)
+     {
         perror(path);
         return -1;
-    }
+     }
 
-    if (!create && !existed) {
+    if (!create && !existed) 
+    {
         fprintf(stderr, "report store for %s does not exist\n", district);
         return -1;
     }
@@ -388,15 +416,18 @@ int report_fd(const char *district, int create, Role role, int want_write)
     flags = want_write || create ? O_RDWR : O_RDONLY;
     if (create) flags |= O_CREAT;
     fd = open(path, flags, REPORT_MODE);
-    if (fd == -1) {
+    if (fd == -1) 
+    {
         perror(path);
         return -1;
     }
-    if (!existed) {
+    if (!existed) 
+    {
         fchmod(fd, REPORT_MODE);
         chmod(path, REPORT_MODE);
     }
-    if (fstat(fd, &st) == -1 || st.st_size % (off_t)sizeof(Report) != 0) {
+    if (fstat(fd, &st) == -1 || st.st_size % (off_t)sizeof(Report) != 0) 
+    {
         fprintf(stderr, "%s ended with a partial report record\n", path);
         close(fd);
         return -1;
@@ -410,13 +441,75 @@ void print_report_info(const char *district)
     struct stat st;
 
     path_join(path, sizeof(path), district, REPORT_FILE);
-    if (stat(path, &st) == -1) {
+    if (stat(path, &st) == -1) 
+    {
         perror(path);
         return;
     }
     mode_string(st.st_mode, mode);
     time_string(st.st_mtime, t, sizeof(t));
     printf("reports.dat: permissions=%s size=%lld modified=%s\n", mode + 1, (long long)st.st_size, t);
+}
+
+int notify_monitor(const char *district, Role role, const char *user)
+{
+    int fd;
+    char buf[32];
+    ssize_t n;
+    long monitor_pid;
+    char logp[PATH_MAX];
+    char line[512];
+    int log_fd;
+    const char *log_msg;
+
+    fd = open(MONITOR_PID_FILE, O_RDONLY);
+
+    if (fd == -1)
+    {
+        log_msg = "monitor_notify: FAILED - could not open .monitor_pid (monitor not running)";
+        printf("monitor_reports not running, notification skipped\n");
+        goto write_log;
+    }
+
+    n = read(fd, buf, sizeof(buf) - 1);
+    close(fd);
+
+    if (n <= 0)
+    {
+        log_msg = "monitor_notify: FAILED - .monitor_pid is empty or unreadable";
+        printf("monitor_reports PID file empty, notification skipped\n");
+        goto write_log;
+    }
+    buf[n] = '\0';
+
+    if (sscanf(buf, "%ld", &monitor_pid) != 1 || monitor_pid <= 0)
+    {
+        log_msg = "monitor_notify: FAILED - invalid PID in .monitor_pid";
+        printf("monitor_reports PID invalid, notification skipped\n");
+        goto write_log;
+    }
+
+    if (kill((pid_t)monitor_pid, SIGUSR1) == -1)
+    {
+        log_msg = "monitor_notify: FAILED - kill(SIGUSR1) failed (monitor may have stopped)";
+        printf("monitor_reports could not be notified (signal failed)\n");
+        goto write_log;
+    }
+
+    printf("monitor_reports notified (PID %ld)\n", monitor_pid);
+    log_msg = "monitor_notify: OK - SIGUSR1 sent to monitor";
+
+    write_log: 
+    path_join(logp, sizeof(logp), district, LOG_FILE);
+    log_fd = open(logp, O_WRONLY | O_CREAT | O_APPEND, LOG_MODE);
+    if (log_fd != -1)
+    {
+        snprintf(line, sizeof(line), "%lld %s %s %s\n", (long long)time(NULL), user, role_name(role), log_msg);
+        write(log_fd, line, strlen(line));
+        fsync(log_fd);
+        close(log_fd);
+    }
+    return 0;
 }
 
 int do_add(const char *district, AddData *in, Role role, unsigned int *new_id)
@@ -431,10 +524,12 @@ int do_add(const char *district, AddData *in, Role role, unsigned int *new_id)
     fd = report_fd(district, 1, role, 1);
     if (fd == -1) return -1;
 
-    while ((n = read(fd, &old, sizeof(old))) == (ssize_t)sizeof(old)) {
+    while ((n = read(fd, &old, sizeof(old))) == (ssize_t)sizeof(old)) 
+    {
         if (old.id > max_id) max_id = old.id;
     }
-    if (n != 0) {
+    if (n != 0) 
+    {
         fprintf(stderr, "report store ended with a partial record\n");
         close(fd);
         return -1;
@@ -452,7 +547,8 @@ int do_add(const char *district, AddData *in, Role role, unsigned int *new_id)
     r.active = 1;
 
     lseek(fd, 0, SEEK_END);
-    if (write(fd, &r, sizeof(r)) != (ssize_t)sizeof(r)) {
+    if (write(fd, &r, sizeof(r)) != (ssize_t)sizeof(r)) 
+    {
         perror("write report");
         close(fd);
         return -1;
@@ -464,11 +560,12 @@ int do_add(const char *district, AddData *in, Role role, unsigned int *new_id)
     *new_id = r.id;
     time_string(r.timestamp, t, sizeof(t));
     printf("Added report %u for %s\n", r.id, district);
-    printf("Inspector: %s | Category: %s | Severity: %d | GPS: %.6f, %.6f | Created: %s\n",
-           r.inspector, r.category, r.severity, r.latitude, r.longitude, t);
-    if (r.severity >= threshold) {
+    printf("Inspector: %s | Category: %s | Severity: %d | GPS: %.6f, %.6f | Created: %s\n", r.inspector, r.category, r.severity, r.latitude, r.longitude, t);
+    if (r.severity >= threshold) 
+    {
         printf("ESCALATION ALERT: severity %d reached threshold %d for %s\n", r.severity, threshold, district);
     }
+    notify_monitor(district, role, in->inspector);
     return 0;
 }
 
@@ -481,37 +578,40 @@ int do_remove(const char *district, unsigned int id, Role role)
 
     fd = report_fd(district, 0, role, 1);
     if (fd == -1) return -1;
-    if (fstat(fd, &st) == -1) {
+    if (fstat(fd, &st) == -1) 
+    {
         perror("fstat");
         close(fd);
         return -1;
     }
 
     end = st.st_size;
-    for (pos = 0; pos < end; pos += (off_t)sizeof(Report)) {
-        if (lseek(fd, pos, SEEK_SET) == (off_t)-1 ||
-            read(fd, &r, sizeof(r)) != (ssize_t)sizeof(r)) {
+    for (pos = 0; pos < end; pos += (off_t)sizeof(Report)) 
+    {
+        if (lseek(fd, pos, SEEK_SET) == (off_t)-1 || read(fd, &r, sizeof(r)) != (ssize_t)sizeof(r)) 
+        {
             perror("read report");
             close(fd);
             return -1;
         }
-        if (r.id == id) {
+        if (r.id == id) 
+        {
             found = 1;
             break;
         }
     }
-    if (!found) {
+    if (!found) 
+    {
         close(fd);
         fprintf(stderr, "report %u was not found in %s\n", id, district);
         return -1;
     }
 
     next = pos + (off_t)sizeof(Report);
-    while (next < end) {
-        if (lseek(fd, next, SEEK_SET) == (off_t)-1 ||
-            read(fd, &r, sizeof(r)) != (ssize_t)sizeof(r) ||
-            lseek(fd, next - (off_t)sizeof(Report), SEEK_SET) == (off_t)-1 ||
-            write(fd, &r, sizeof(r)) != (ssize_t)sizeof(r)) {
+    while (next < end) 
+    {
+        if (lseek(fd, next, SEEK_SET) == (off_t)-1 || read(fd, &r, sizeof(r)) != (ssize_t)sizeof(r) || lseek(fd, next - (off_t)sizeof(Report), SEEK_SET) == (off_t)-1 ||write(fd, &r, sizeof(r)) != (ssize_t)sizeof(r)) 
+        {
             perror("shift report");
             close(fd);
             return -1;
@@ -523,6 +623,90 @@ int do_remove(const char *district, unsigned int id, Role role)
     fsync(fd);
     close(fd);
     printf("Removed report %u from %s\n", id, district);
+    return 0;
+}
+
+int do_remove_district(const char *district, Role role)
+{
+    char active[PATH_MAX];
+    char district_path[PATH_MAX];
+    pid_t pid;
+    int status;
+
+    
+    if (snprintf(district_path, sizeof(district_path), "%s", district) >= (int)sizeof(district_path))
+     {
+        fprintf(stderr, "district path too long\n");
+        return -1;
+     }
+
+    
+    struct stat st;
+    if (stat(district_path, &st) == -1) 
+    {
+        fprintf(stderr, "district %s does not exist\n", district);
+        return -1;
+    }
+    if (!S_ISDIR(st.st_mode))
+     {
+        fprintf(stderr, "%s is not a directory\n", district_path);
+        return -1;
+    }
+
+    printf("Removing district directory: %s\n", district_path);
+
+    pid = fork();
+    if (pid == -1) 
+    {
+        perror("fork");
+        return -1;
+    }
+
+    if (pid == 0) 
+    {
+        
+        char *rm_argv[4];
+        rm_argv[0] = "/bin/rm";
+        rm_argv[1] = "-rf";
+        rm_argv[2] = district_path;
+        rm_argv[3] = NULL;
+
+        execv("/bin/rm", rm_argv);
+        
+        perror("execv /bin/rm");
+        _exit(1);
+    }
+
+     
+    if (waitpid(pid, &status, 0) == -1)
+     {
+        perror("waitpid");
+        return -1;
+    }
+    if (!WIFEXITED(status) || WEXITSTATUS(status) != 0) 
+    {
+        fprintf(stderr, "rm -rf failed for district %s (exit status %d)\n",
+                district, WIFEXITED(status) ? WEXITSTATUS(status) : -1);
+        return -1;
+    }
+    printf("District directory %s removed successfully\n", district_path);
+
+ 
+    path_active(active, sizeof(active), district);
+    if (unlink(active) == -1) 
+    {
+        if (errno != ENOENT) 
+        {
+            perror(active);
+            fprintf(stderr, "warning: could not remove symlink %s\n", active);
+            
+        }
+    } 
+    else 
+    {
+        printf("Removed symlink %s\n", active);
+    }
+
     return 0;
 }
 
@@ -542,37 +726,53 @@ int parse_query(const char *expr, Query *q)
     query_defaults(q);
     if (!expr) return 0;
     copy_text(buf, sizeof(buf), expr, "filter");
-    for (tok = strtok(buf, ", "); tok; tok = strtok(NULL, ", ")) {
-        if (strncmp(tok, "severity:>=", 11) == 0) {
+    for (tok = strtok(buf, ", "); tok; tok = strtok(NULL, ", ")) 
+    {
+        if (strncmp(tok, "severity:>=", 11) == 0) 
+        {
             if (sscanf(tok + 11, "%d", &n) != 1) return -1;
             q->min_sev = n;
-        } else if (strncmp(tok, "severity>=", 10) == 0) {
+        } 
+        else if (strncmp(tok, "severity>=", 10) == 0) 
+        {
             if (sscanf(tok + 10, "%d", &n) != 1) return -1;
             q->min_sev = n;
-        } else if (strncmp(tok, "severity:<=", 11) == 0) {
+        } 
+        else if (strncmp(tok, "severity:<=", 11) == 0) 
+        {
             if (sscanf(tok + 11, "%d", &n) != 1) return -1;
             q->max_sev = n;
-        } else if (strncmp(tok, "severity<=", 10) == 0) {
+        } 
+        else if (strncmp(tok, "severity<=", 10) == 0) 
+        {
             if (sscanf(tok + 10, "%d", &n) != 1) return -1;
             q->max_sev = n;
-        } else if (strncmp(tok, "severity:==", 11) == 0) {
+        } 
+        else if (strncmp(tok, "severity:==", 11) == 0) 
+        {
             if (sscanf(tok + 11, "%d", &n) != 1) return -1;
             q->min_sev = q->max_sev = n;
-        } else if (strncmp(tok, "severity=", 9) == 0) {
+        } 
+        else if (strncmp(tok, "severity=", 9) == 0)
+        {
             if (sscanf(tok + 9, "%d", &n) != 1) return -1;
             q->min_sev = q->max_sev = n;
-        } else if (strncmp(tok, "category:==", 11) == 0) copy_text(q->category, sizeof(q->category), tok + 11, "category");
+        } 
+        else if (strncmp(tok, "category:==", 11) == 0) copy_text(q->category, sizeof(q->category), tok + 11, "category");
         else if (strncmp(tok, "category=", 9) == 0) copy_text(q->category, sizeof(q->category), tok + 9, "category");
         else if (strncmp(tok, "inspector:==", 12) == 0) copy_text(q->inspector, sizeof(q->inspector), tok + 12, "inspector");
         else if (strncmp(tok, "inspector=", 10) == 0) copy_text(q->inspector, sizeof(q->inspector), tok + 10, "inspector");
         else if (strncmp(tok, "text:==", 7) == 0) copy_text(q->text, sizeof(q->text), tok + 7, "text");
         else if (strncmp(tok, "text=", 5) == 0) copy_text(q->text, sizeof(q->text), tok + 5, "text");
         else if (strncmp(tok, "id=", 3) == 0) parse_uint(tok + 3, &q->id);
-        else if (strncmp(tok, "active=", 7) == 0) {
+        else if (strncmp(tok, "active=", 7) == 0) 
+        {
             v = tok + 7;
             if (strcmp(v, "all") == 0) q->active = -1;
             else q->active = (strcmp(v, "0") && strcmp(v, "false") && strcmp(v, "no"));
-        } else {
+        } 
+        else 
+        {
             fprintf(stderr, "unknown filter term: %s\n", tok);
             return -1;
         }
@@ -585,9 +785,10 @@ int contains(const char *hay, const char *needle)
     int i, j;
 
     if (!needle[0]) return 1;
-    for (i = 0; hay[i]; i++) {
-        for (j = 0; needle[j] && hay[i + j] &&
-                    tolower((unsigned char)hay[i + j]) == tolower((unsigned char)needle[j]); j++) {
+    for (i = 0; hay[i]; i++) 
+    {
+        for (j = 0; needle[j] && hay[i + j] && tolower((unsigned char)hay[i + j]) == tolower((unsigned char)needle[j]); j++) 
+        {
         }
         if (!needle[j]) return 1;
     }
@@ -608,8 +809,7 @@ int query_match(Report *r, Query *q)
 
 void table_head(void)
 {
-    printf("%-5s %-3s %-6s %-19s %-14s %-10s %-11s %-11s %s\n",
-           "ID", "Sev", "Active", "Timestamp", "Inspector", "Category", "Latitude", "Longitude", "Description");
+    printf("%-5s %-3s %-6s %-19s %-14s %-10s %-11s %-11s %s\n", "ID", "Sev", "Active", "Timestamp", "Inspector", "Category", "Latitude", "Longitude", "Description");
 }
 
 void table_row(Report *r)
@@ -617,9 +817,7 @@ void table_row(Report *r)
     char t[32];
 
     time_string(r->timestamp, t, sizeof(t));
-    printf("%-5u %-3d %-6s %-19s %-14s %-10s %-11.6f %-11.6f %s\n",
-           r->id, r->severity, r->active ? "yes" : "no", t,
-           r->inspector, r->category, r->latitude, r->longitude, r->description);
+    printf("%-5u %-3d %-6s %-19s %-14s %-10s %-11.6f %-11.6f %s\n", r->id, r->severity, r->active ? "yes" : "no", t, r->inspector, r->category, r->latitude, r->longitude, r->description);
 }
 
 int do_list(const char *district, Role role, Query *q)
@@ -632,8 +830,10 @@ int do_list(const char *district, Role role, Query *q)
     if (fd == -1) return -1;
     print_report_info(district);
     table_head();
-    while ((n = read(fd, &r, sizeof(r))) == (ssize_t)sizeof(r)) {
-        if (query_match(&r, q)) {
+    while ((n = read(fd, &r, sizeof(r))) == (ssize_t)sizeof(r)) 
+    {
+        if (query_match(&r, q)) 
+        {
             table_row(&r);
             count++;
         }
@@ -684,8 +884,10 @@ int parse_condition(const char *input, char *field, char *op, char *value)
     field[len] = 0;
     p++;
 
-    for (i = 0; i < 7; i++) {
-        if (strncmp(p, ops[i], strlen(ops[i])) == 0) {
+    for (i = 0; i < 7; i++) 
+    {
+        if (strncmp(p, ops[i], strlen(ops[i])) == 0) 
+        {
             copy_text(op, 3, ops[i], "operator");
             v = p + strlen(ops[i]);
             if (*v == ':') v++;
@@ -702,11 +904,13 @@ int match_condition(Report *r, const char *field, const char *op, const char *va
     int iv;
     long long tv;
 
-    if (!strcmp(field, "severity")) {
+    if (!strcmp(field, "severity")) 
+    {
         if (sscanf(value, "%d", &iv) != 1) return 0;
         return cmp_int(r->severity, op, iv);
     }
-    if (!strcmp(field, "timestamp")) {
+    if (!strcmp(field, "timestamp")) 
+    {
         if (sscanf(value, "%lld", &tv) != 1) return 0;
         return cmp_int((long long)r->timestamp, op, tv);
     }
@@ -723,8 +927,10 @@ int do_filter(const char *district, Role role, const char **conds, int cond_coun
     char fields[16][32], ops[16][3], values[16][320];
 
     if (cond_count < 1 || cond_count > 16) return -1;
-    for (i = 0; i < cond_count; i++) {
-        if (parse_condition(conds[i], fields[i], ops[i], values[i]) == -1) {
+    for (i = 0; i < cond_count; i++) 
+    {
+        if (parse_condition(conds[i], fields[i], ops[i], values[i]) == -1) 
+        {
             fprintf(stderr, "invalid filter condition: %s\n", conds[i]);
             return -1;
         }
@@ -734,10 +940,12 @@ int do_filter(const char *district, Role role, const char **conds, int cond_coun
     if (fd == -1) return -1;
     print_report_info(district);
     table_head();
-    while ((n = read(fd, &r, sizeof(r))) == (ssize_t)sizeof(r)) {
+    while ((n = read(fd, &r, sizeof(r))) == (ssize_t)sizeof(r)) 
+    {
         if (!r.active) continue;
         ok = 1;
-        for (i = 0; i < cond_count; i++) {
+        for (i = 0; i < cond_count; i++) 
+        {
             if (!match_condition(&r, fields[i], ops[i], values[i])) ok = 0;
         }
         if (ok) {
@@ -760,12 +968,12 @@ int do_show(const char *district, Role role, unsigned int id)
 
     fd = report_fd(district, 0, role, 0);
     if (fd == -1) return -1;
-    while ((n = read(fd, &r, sizeof(r))) == (ssize_t)sizeof(r)) {
-        if (r.id == id) {
+    while ((n = read(fd, &r, sizeof(r))) == (ssize_t)sizeof(r)) 
+    {
+        if (r.id == id) 
+        {
             time_string(r.timestamp, t, sizeof(t));
-            printf("ID: %u\nDistrict: %s\nInspector: %s\nGPS: %.6f, %.6f\nCategory: %s\nSeverity: %d\nTimestamp: %s\nDescription: %s\nActive: %s\n",
-                   r.id, district, r.inspector, r.latitude, r.longitude,
-                   r.category, r.severity, t, r.description, r.active ? "yes" : "no");
+            printf("ID: %u\nDistrict: %s\nInspector: %s\nGPS: %.6f, %.6f\nCategory: %s\nSeverity: %d\nTimestamp: %s\nDescription: %s\nActive: %s\n", r.id, district, r.inspector, r.latitude, r.longitude, r.category, r.severity, t, r.description, r.active ? "yes" : "no");
             close(fd);
             return 0;
         }
@@ -781,15 +989,15 @@ void stat_line(const char *label, const char *path, int link)
     struct stat st;
     char mode[11], t[32];
 
-    if ((link ? lstat(path, &st) : stat(path, &st)) == -1) {
+    if ((link ? lstat(path, &st) : stat(path, &st)) == -1) 
+    {
         if (errno == ENOENT) printf("%s: missing (%s)\n", label, path);
         else perror(path);
         return;
     }
     mode_string(st.st_mode, mode);
     time_string(st.st_mtime, t, sizeof(t));
-    printf("%s: %s | size=%lld | mode=%s (%03o) | modified=%s\n",
-           label, path, (long long)st.st_size, mode, st.st_mode & 0777, t);
+    printf("%s: %s | size=%lld | mode=%s (%03o) | modified=%s\n", label, path, (long long)st.st_size, mode, st.st_mode & 0777, t);
 }
 
 int do_metadata(const char *district)
@@ -808,16 +1016,19 @@ int do_metadata(const char *district)
     path_join(p, sizeof(p), district, LATEST_LINK);
     stat_line("Report symlink", p, 1);
     n = readlink(p, target, sizeof(target) - 1);
-    if (n != -1) {
+    if (n != -1) 
+    {
         target[n] = 0;
         printf("Report symlink target: %s\n", target);
     }
     path_active(active, sizeof(active), district);
     if (lstat(active, &st) == -1) printf("Active reports symlink: missing (%s)\n", active);
     else if (!S_ISLNK(st.st_mode)) printf("Active reports symlink: %s exists but is not a symlink\n", active);
-    else {
+    else 
+    {
         n = readlink(active, target, sizeof(target) - 1);
-        if (n != -1) {
+        if (n != -1) 
+        {
             target[n] = 0;
             printf("Active reports symlink: %s -> %s\n", active, target);
         }
@@ -839,21 +1050,24 @@ int fill_missing_add_fields(AddData *a, int has_lat, int has_lon, int has_cat, i
 {
     char buf[DESC_LEN];
 
-    if (!has_lat) {
+    if (!has_lat) 
+    {
         if (prompt_line("Latitude: ", buf, sizeof(buf)) == -1 || sscanf(buf, "%lf", &a->lat) != 1) return -1;
     }
-    if (!has_lon) {
+    if (!has_lon) 
+    {
         if (prompt_line("Longitude: ", buf, sizeof(buf)) == -1 || sscanf(buf, "%lf", &a->lon) != 1) return -1;
     }
-    if (!has_cat) {
-        if (prompt_line("Category (road/lighting/flooding/other): ", a->category, CATEGORY_LEN) == -1 ||
-            !good_name(a->category, "category")) return -1;
+    if (!has_cat) 
+    {
+        if (prompt_line("Category (road/lighting/flooding/other): ", a->category, CATEGORY_LEN) == -1 || !good_name(a->category, "category")) return -1;
     }
-    if (!has_sev) {
-        if (prompt_line("Severity level (1/2/3): ", buf, sizeof(buf)) == -1 ||
-            parse_severity(buf, &a->severity) == -1) return -1;
+    if (!has_sev) 
+    {
+        if (prompt_line("Severity level (1/2/3): ", buf, sizeof(buf)) == -1 || parse_severity(buf, &a->severity) == -1) return -1;
     }
-    if (!has_desc) {
+    if (!has_desc) 
+    {
         if (prompt_line("Description: ", a->desc, DESC_LEN) == -1) return -1;
     }
     return 0;
@@ -865,6 +1079,7 @@ void usage(FILE *out)
             "Usage:\n"
             "  city_manager --role inspector|manager --user USER --add DISTRICT [--lat LAT] [--lon LON] [--category CATEGORY] [--severity 1|2|3] [--description TEXT]\n"
             "  city_manager --role manager --user USER --remove_report DISTRICT ID\n"
+            "  city_manager --role manager --user USER --remove_district DISTRICT\n"
             "  city_manager --role manager --user USER --update_threshold DISTRICT 1|2|3\n"
             "  city_manager --role inspector|manager --user USER --list DISTRICT\n"
             "  city_manager --role inspector|manager --user USER --view DISTRICT ID\n"
@@ -890,132 +1105,207 @@ int main(int argc, char **argv)
     int i, rc = -1;
 
     query_defaults(&q);
-    if (argc == 1) {
+    if (argc == 1) 
+    {
         usage(stderr);
         return 2;
     }
 
-    for (i = 1; i < argc; i++) {
-        if (!strcmp(argv[i], "--help")) {
+    for (i = 1; i < argc; i++) 
+    {
+        if (!strcmp(argv[i], "--help")) 
+        {
             usage(stdout);
             return 0;
-        } else if (!strcmp(argv[i], "--role")) {
+        }
+        else if (!strcmp(argv[i], "--role")) 
+        {
             if (!need_arg(argc, argv, i, "--role")) return 2;
             role = parse_role(argv[++i]);
-            if (role == ROLE_BAD) {
+            if (role == ROLE_BAD) 
+            {
                 fprintf(stderr, "unknown role: %s\n", argv[i]);
                 return 2;
             }
-        } else if (!strcmp(argv[i], "--user")) {
+        }
+        else if (!strcmp(argv[i], "--user")) 
+        {
             if (!need_arg(argc, argv, i, "--user")) return 2;
             if (!good_name(argv[i + 1], "user") || copy_text(user, sizeof(user), argv[++i], "--user") == -1) return 2;
-        } else if (!strcmp(argv[i], "--add")) {
+        } 
+        else if (!strcmp(argv[i], "--add")) 
+        {
             if (cmd != CMD_NONE || !need_arg(argc, argv, i, "--add")) return 2;
             cmd = CMD_ADD;
             district = argv[++i];
-        } else if (!strcmp(argv[i], "--remove_report")) {
+        } 
+        else if (!strcmp(argv[i], "--remove_report")) 
+        {
             if (cmd != CMD_NONE || !need_arg(argc, argv, i, "--remove_report")) return 2;
             cmd = CMD_REMOVE;
             district = argv[++i];
             if (!need_arg(argc, argv, i, "--remove_report ID") || parse_uint(argv[++i], &id) == -1 || id == 0) return 2;
-        } else if (!strcmp(argv[i], "--update_threshold") || !strcmp(argv[i], "--set_threshold")) {
+        } 
+        else if (!strcmp(argv[i], "--remove_district")) 
+        {
+            if (cmd != CMD_NONE || !need_arg(argc, argv, i, "--remove_district")) return 2;
+            cmd = CMD_REMOVE_DISTRICT;
+            district = argv[++i];
+        } 
+        else if (!strcmp(argv[i], "--update_threshold") || !strcmp(argv[i], "--set_threshold"))
+        {
             if (cmd != CMD_NONE || !need_arg(argc, argv, i, argv[i])) return 2;
             cmd = CMD_THRESHOLD;
             district = argv[++i];
             if (!need_arg(argc, argv, i, "--update_threshold VALUE") || parse_severity(argv[++i], &threshold) == -1) return 2;
-        } else if (!strcmp(argv[i], "--list")) {
+        } 
+        else if (!strcmp(argv[i], "--list")) 
+        {
             if (cmd != CMD_NONE || !need_arg(argc, argv, i, "--list")) return 2;
             cmd = CMD_LIST;
             district = argv[++i];
-        } else if (!strcmp(argv[i], "--view") || !strcmp(argv[i], "--show")) {
+        } 
+        else if (!strcmp(argv[i], "--view") || !strcmp(argv[i], "--show")) 
+        {
             if (cmd != CMD_NONE || !need_arg(argc, argv, i, argv[i])) return 2;
             cmd = CMD_SHOW;
             district = argv[++i];
             if (!need_arg(argc, argv, i, "--view ID") || parse_uint(argv[++i], &id) == -1 || id == 0) return 2;
-        } else if (!strcmp(argv[i], "--metadata")) {
+        } 
+        else if (!strcmp(argv[i], "--metadata")) 
+        {
             if (cmd != CMD_NONE || !need_arg(argc, argv, i, "--metadata")) return 2;
             cmd = CMD_METADATA;
             district = argv[++i];
-        } else if (!strcmp(argv[i], "--filter")) {
-            if (cmd == CMD_LIST) {
+        } 
+        else if (!strcmp(argv[i], "--filter")) 
+        {
+            if (cmd == CMD_LIST) 
+            {
                 if (!need_arg(argc, argv, i, "--filter")) return 2;
                 list_filter = argv[++i];
-            } else {
+            } 
+            else 
+            {
                 if (cmd != CMD_NONE || !need_arg(argc, argv, i, "--filter")) return 2;
                 cmd = CMD_FILTER;
                 district = argv[++i];
-                while (i + 1 < argc && strncmp(argv[i + 1], "--", 2)) {
+                while (i + 1 < argc && strncmp(argv[i + 1], "--", 2)) 
+                {
                     if (cond_count == 16) return 2;
                     conds[cond_count++] = argv[++i];
                 }
                 if (cond_count == 0) return 2;
             }
-        } else if (!strcmp(argv[i], "--lat")) {
+        } 
+        else if (!strcmp(argv[i], "--lat")) 
+        {
             if (!need_arg(argc, argv, i, "--lat") || sscanf(argv[++i], "%lf", &add.lat) != 1) return 2;
             has_lat = 1;
-        } else if (!strcmp(argv[i], "--lon")) {
+        } 
+        else if (!strcmp(argv[i], "--lon")) 
+        {
             if (!need_arg(argc, argv, i, "--lon") || sscanf(argv[++i], "%lf", &add.lon) != 1) return 2;
             has_lon = 1;
-        } else if (!strcmp(argv[i], "--category")) {
+        } 
+        else if (!strcmp(argv[i], "--category")) 
+        {
             if (!need_arg(argc, argv, i, "--category") || !good_name(argv[i + 1], "category") ||
                 copy_text(add.category, sizeof(add.category), argv[++i], "--category") == -1) return 2;
             has_cat = 1;
-        } else if (!strcmp(argv[i], "--severity")) {
+        } 
+        else if (!strcmp(argv[i], "--severity")) 
+        {
             if (!need_arg(argc, argv, i, "--severity") || parse_severity(argv[++i], &add.severity) == -1) return 2;
             has_sev = 1;
-        } else if (!strcmp(argv[i], "--description")) {
-            if (!need_arg(argc, argv, i, "--description") ||
-                copy_text(add.desc, sizeof(add.desc), argv[++i], "--description") == -1) return 2;
+        } 
+        else if (!strcmp(argv[i], "--description")) 
+        {
+            if (!need_arg(argc, argv, i, "--description") || copy_text(add.desc, sizeof(add.desc), argv[++i], "--description") == -1) return 2;
             has_desc = 1;
-        } else {
+        } 
+        else 
+        {
             fprintf(stderr, "unknown option: %s\n", argv[i]);
             return 2;
         }
     }
 
     if (cmd == CMD_NONE || !district || !good_name(district, "district")) return 2;
-    if (!user[0]) {
+    if (!user[0]) 
+    {
         fprintf(stderr, "--user is required so actions can be written to logged_district\n");
         return 2;
     }
-    if (role == ROLE_BAD) {
+    if (role == ROLE_BAD) 
+    {
         fprintf(stderr, "a valid --role is required: inspector or manager\n");
         return 2;
     }
-    if ((cmd == CMD_REMOVE || cmd == CMD_THRESHOLD) && role != ROLE_MANAGER) {
+    if ((cmd == CMD_REMOVE || cmd == CMD_THRESHOLD || cmd == CMD_REMOVE_DISTRICT) && role != ROLE_MANAGER) 
+    {
         fprintf(stderr, "permission denied: this command requires role manager\n");
         return 1;
     }
 
     printf("Role: %s | User: %s\n", role_name(role), user);
-    if (cmd == CMD_ADD) {
+    if (cmd == CMD_ADD) 
+    {
         copy_text(add.inspector, sizeof(add.inspector), user, "--user");
         if (fill_missing_add_fields(&add, has_lat, has_lon, has_cat, has_sev, has_desc) == -1) return 2;
         rc = do_add(district, &add, role, &made_id);
         snprintf(action, sizeof(action), "add report_id=%u", made_id);
-    } else if (cmd == CMD_REMOVE) {
+    } 
+    else if (cmd == CMD_REMOVE) 
+    {
         rc = do_remove(district, id, role);
         snprintf(action, sizeof(action), "remove_report report_id=%u", id);
-    } else if (cmd == CMD_LIST) {
+    } 
+    else if (cmd == CMD_REMOVE_DISTRICT) 
+    {
+        snprintf(action, sizeof(action), "remove_district district=%s", district);
+        if (ensure_layout(district) != -1) 
+        {
+            add_log(district, role, user, action);
+        }
+        rc = do_remove_district(district, role);
+        
+        if (rc == 0) 
+        {
+            printf("District %s and its symlink removed.\n", district);
+        }
+        return rc == 0 ? 0 : 1;
+    } 
+    else if (cmd == CMD_LIST) 
+    {
         if (parse_query(list_filter, &q) == -1) return 2;
         rc = do_list(district, role, &q);
         snprintf(action, sizeof(action), "list");
-    } else if (cmd == CMD_SHOW) {
+    } 
+    else if (cmd == CMD_SHOW) 
+    {
         rc = do_show(district, role, id);
         snprintf(action, sizeof(action), "show report_id=%u", id);
-    } else if (cmd == CMD_THRESHOLD) {
+    } 
+    else if (cmd == CMD_THRESHOLD) 
+    {
         rc = write_threshold(district, role, threshold);
         snprintf(action, sizeof(action), "set_threshold threshold=%d", threshold);
-    } else if (cmd == CMD_FILTER) {
+    } 
+    else if (cmd == CMD_FILTER) 
+    {
         rc = do_filter(district, role, conds, cond_count);
         snprintf(action, sizeof(action), "filter");
-    } else if (cmd == CMD_METADATA) {
+    } 
+    else if (cmd == CMD_METADATA) 
+    {
         rc = do_metadata(district);
         snprintf(action, sizeof(action), "metadata");
     }
 
     if (rc == -1) return 1;
-    if (add_log(district, role, user, action) == -1) {
+    if (add_log(district, role, user, action) == -1) 
+    {
         fprintf(stderr, "operation succeeded, but logged_district was not updated for role=%s\n", role_name(role));
     }
     return 0;
