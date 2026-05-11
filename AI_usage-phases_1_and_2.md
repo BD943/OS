@@ -1,5 +1,5 @@
 # AI Usage Documentation
-
+ 
 I built this project off the functionality of my original city manager program.
 I used AI assistance while writing and checking the code, but the final project
 was organized and tested by me.
@@ -7,7 +7,8 @@ was organized and tested by me.
 Tool used:
 
 - ChatGPT
-
+- Claude 
+Phase 1:
 Prompts I used:
 
 - I described my `Report` structure and asked for help writing a simple
@@ -27,9 +28,6 @@ What AI helped generate:
   in `main()`.
 
 What I changed:
-
-- I kept the code in one simple `main.c` file so it is different from my
-  original multi-file project.
 - I reviewed the generated filter logic and connected it myself to the loop
   that reads `reports.dat` one record at a time.
 - I kept the permission checks, file creation, symbolic links, logging, and
@@ -44,3 +42,30 @@ What I learned:
 
 I also used AI to help check the project with `make`, `./build.sh`, and sample
 commands for adding, listing, viewing, filtering, and removing reports.
+
+Phase 2
+ Where I Used AI
+
+ -Throughout parts 1,2 and 3 of phase 2.
+ 
+
+Why I Used AI
+
+-For the rapid spotting of errors and fixing them every time something didn't compile or work as intended.
+-Improve the code and remove unnecessary parts of it for efficiency and readability.
+ 
+How I Used AI
+
+-General debugging and testing 
+- AI was used to draft command input scripts, which were subsequently reviewed, modified, and used to facilitate rapid and repeatable testing of functionality across the different parts of Phase 2.
+- Where deemed appropriate, AI was used to make focused adjustments to existing functions for instance, simplifying logic or improving structure, while preserving the intended behaviour of the code.
+
+ 
+
+ 
+
+ 
+
+ 
+
+
